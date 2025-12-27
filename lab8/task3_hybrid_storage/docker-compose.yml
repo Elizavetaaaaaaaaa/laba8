@@ -1,0 +1,61 @@
+services:
+  # S3-совместимое хранилище
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ':9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # FUSE монтирование S3
+  s3fs:
+    build:
+      context: .
+      dockerfile: Dockerfile.s3fs
+    container_name: s3fs
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: hybrid-storage
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    volumes:
+      - s3fs_mount:/mnt/s3
+
+  # Демо приложение
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: hybrid_app
+    depends_on:
+      - s3fs
+    volumes:
+      - hot_storage:/data/hot
+      - s3fs_mount:/data/warm
+    stdin_open: true
+    tty: true
+    command: python3 /app/cli.py
+
+volumes:
+  minio_data:
+  s3fs_mount:
+  hot_storage:
